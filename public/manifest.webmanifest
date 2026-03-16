@@ -1,0 +1,9 @@
+{
+  "name": "Chinese to English Smart Translator",
+  "short_name": "CN-EN Translate",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "description": "Translate Chinese text or voice into English with pronunciation playback."
+}
