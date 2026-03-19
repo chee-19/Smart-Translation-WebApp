@@ -3,4 +3,3 @@ uvicorn[standard]==0.30.6
 python-multipart==0.0.9
 lingua-language-detector==2.2.0
 argostranslate==1.9.6
-torch==2.2.2
