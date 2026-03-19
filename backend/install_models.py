@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 import argostranslate.package
 import argostranslate.translate
 
@@ -11,10 +14,17 @@ def normalize_code(code):
     return code.strip().lower().replace("_", "-")
 
 
-def list_installed():
+def print_package_dir():
+    package_dir = os.environ.get("ARGOS_PACKAGE_DIR")
+    print("ARGOS_PACKAGE_DIR =", package_dir)
+    if package_dir:
+        Path(package_dir).mkdir(parents=True, exist_ok=True)
+
+
+def list_installed_languages():
     installed_languages = argostranslate.translate.get_installed_languages()
     installed_codes = [
-        normalize_code(lang.code)
+        normalize_code(getattr(lang, "code", None))
         for lang in installed_languages
         if getattr(lang, "code", None)
     ]
@@ -46,8 +56,10 @@ def is_translation_installed(from_code: str, to_code: str) -> bool:
 
 
 def main():
-    print("Checking installed Argos packages before install...")
-    list_installed()
+    print_package_dir()
+
+    print("Before install check:")
+    list_installed_languages()
 
     if is_translation_installed(SOURCE_CODE, TARGET_CODE):
         print(f"Argos model {SOURCE_CODE}_{TARGET_CODE} already installed.")
@@ -72,13 +84,16 @@ def main():
 
     download_path = package_to_install.download()
     print(f"Downloaded package to: {download_path}")
+
     argostranslate.package.install_from_path(download_path)
 
-    print("Checking installed Argos packages after install...")
-    list_installed()
+    print("After install check:")
+    list_installed_languages()
 
     if not is_translation_installed(SOURCE_CODE, TARGET_CODE):
-        raise RuntimeError(f"Argos model {SOURCE_CODE}_{TARGET_CODE} still not available after install")
+        raise RuntimeError(
+            f"Argos model {SOURCE_CODE}_{TARGET_CODE} still not available after install"
+        )
 
     print(f"Installed Argos model {SOURCE_CODE}_{TARGET_CODE} successfully.")
 
