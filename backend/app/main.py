@@ -3,6 +3,7 @@ import logging
 import sys
 
 import argostranslate.translate
+import argostranslate.package
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from lingua import LanguageDetectorBuilder
@@ -15,6 +16,18 @@ logger = logging.getLogger("smart-translator")
 TARGET_LANGUAGE_CODE = "en"
 detector = LanguageDetectorBuilder.from_all_languages().build()
 argos_translations = {}
+
+def install_argos_models():
+    argostranslate.package.update_package_index()
+    available_packages = argostranslate.package.get_available_packages()
+
+    required = ["zh_en", "ja_en", "ko_en", "de_en"]
+
+    for pkg in available_packages:
+        pair = f"{pkg.from_code}_{pkg.to_code}"
+        if pair in required:
+            print(f"Installing Argos package: {pair}")
+            argostranslate.package.install_from_path(pkg.download())
 
 
 def normalize_code(code: str | None) -> str | None:
@@ -146,6 +159,7 @@ def load_argos_translations():
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    install_argos_models()
     load_argos_translations()
     yield
 
