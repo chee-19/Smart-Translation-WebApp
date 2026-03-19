@@ -234,7 +234,6 @@ def load_argos_translations():
 async def lifespan(_app: FastAPI):
     startup_started_at = perf_counter()
     logger.info("Application startup started.")
-    ensure_argos_translation_installed()
     load_argos_translations()
     logger.info(
         "Application startup completed in %.3fs",
