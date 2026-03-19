@@ -5,6 +5,7 @@ Create a mobile-friendly Chinese → English translation web app with:
 - automatic language detection
 - optional voice input
 - English pronunciation playback
+- cloud-based saved translations for future referenc
 
 ## System Components
 
@@ -15,12 +16,21 @@ The frontend handles:
 - displaying detection results
 - displaying translation results
 - triggering English text-to-speech
+- saving selected translations
+- displaying saved translations in a separate page
+- communicating with Supabase for saved translation storage
 
 ### Backend
 The backend handles:
 - text language detection with Lingua
 - voice transcription with Whisper
 - Chinese → English translation with Argos Translate
+
+### Database / Cloud Storage
+Supabase handles:
+- storing saved translations
+- retrieving saved translations
+- optionally associating saved translations with user accounts
 
 ## Main User Flow
 
