@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { detectLanguage, translateToEnglish } from '../services/api';
+import { translateToEnglish } from '../services/api';
 import {
   checkTranslationSaved,
   deleteSavedTranslation,
@@ -237,13 +237,10 @@ export default function TranslatorCard() {
       setSaveMessage('');
       setCopyMessage('');
 
-      const detection = await detectLanguage(cleanText);
       const translation = await translateToEnglish(cleanText);
 
-      setDetectedLanguage(
-        translation.detected_language || detection.language || 'Input'
-      );
-      setConfidence(String(detection.confidence));
+      setDetectedLanguage(translation.detected_language || 'Input');
+      setConfidence('');
       setTranslatedText(translation.translated_text);
     } catch (err) {
       setError(err.message || 'Something went wrong while translating.');
