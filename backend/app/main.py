@@ -21,7 +21,8 @@ def install_argos_models():
     argostranslate.package.update_package_index()
     available_packages = argostranslate.package.get_available_packages()
 
-    required = ["zh_en", "ja_en", "ko_en", "de_en"]
+    #required = ["zh_en", "ja_en", "ko_en", "de_en"]
+    required = ["zh_en"]
 
     for pkg in available_packages:
         pair = f"{pkg.from_code}_{pkg.to_code}"
@@ -62,11 +63,15 @@ def get_language_code_candidates(language) -> list[str]:
 def get_lingua_aliases_for_argos_code(argos_code: str) -> set[str]:
     normalized_code = normalize_code(argos_code)
 
+    # ARGOS_LINGUA_ALIASES = {
+    #     "zh": {"zh", "zho", "chinese"},
+    #     "ja": {"ja", "jpn", "japanese"},
+    #     "ko": {"ko", "kor", "korean"},
+    #     "de": {"de", "deu", "ger", "german"},
+    #     "en": {"en", "eng", "english"},
+    # }
     ARGOS_LINGUA_ALIASES = {
         "zh": {"zh", "zho", "chinese"},
-        "ja": {"ja", "jpn", "japanese"},
-        "ko": {"ko", "kor", "korean"},
-        "de": {"de", "deu", "ger", "german"},
         "en": {"en", "eng", "english"},
     }
 
