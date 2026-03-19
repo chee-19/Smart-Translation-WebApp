@@ -1,86 +1,157 @@
 from contextlib import asynccontextmanager
+import logging
+import sys
 
 import argostranslate.translate
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from lingua import Language, LanguageDetectorBuilder
+from lingua import LanguageDetectorBuilder
 from pydantic import BaseModel
 
 
-SUPPORTED_SOURCE_LANGUAGE = Language.CHINESE
-SUPPORTED_SOURCE_LANGUAGE_CODE = "zh"
-SUPPORTED_TARGET_LANGUAGE_CODE = "en"
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("smart-translator")
 
-LANGUAGE_NAME_MAP = {
-    Language.CHINESE: "Chinese",
-    Language.ENGLISH: "English",
-}
-
-detector = (
-    LanguageDetectorBuilder.from_languages(Language.CHINESE, Language.ENGLISH)
-    .build()
-)
-argos_translation = None
+TARGET_LANGUAGE_CODE = "en"
+detector = LanguageDetectorBuilder.from_all_languages().build()
+argos_translations = {}
 
 
-def get_language_name(language: Language | None) -> str:
+def normalize_code(code: str | None) -> str | None:
+    if not code:
+        return None
+
+    return code.strip().lower().replace("_", "-")
+
+
+def get_language_name(language) -> str:
     if language is None:
         return "Unknown"
 
-    return LANGUAGE_NAME_MAP.get(language, language.name.title())
+    return language.name.replace("_", " ").title()
 
 
-def get_language_code(language: Language | None) -> str:
-    if language is None or language.iso_code_639_1 is None:
-        return "unknown"
+def get_language_code_candidates(language) -> list[str]:
+    if language is None:
+        return []
 
-    return language.iso_code_639_1.name.lower()
+    candidates = []
+
+    if language.iso_code_639_1 is not None:
+        candidates.append(normalize_code(language.iso_code_639_1.name))
+
+    if language.iso_code_639_3 is not None:
+        candidates.append(normalize_code(language.iso_code_639_3.name))
+
+    return [code for code in dict.fromkeys(candidates) if code]
 
 
-def load_argos_translation():
-    installed_languages = argostranslate.translate.get_installed_languages()
+def get_lingua_aliases_for_argos_code(argos_code: str) -> set[str]:
+    normalized_code = normalize_code(argos_code)
 
-    source_language = next(
-        (
-            language
-            for language in installed_languages
-            if language.code == SUPPORTED_SOURCE_LANGUAGE_CODE
-        ),
-        None,
+    ARGOS_LINGUA_ALIASES = {
+        "zh": {"zh", "zho", "chinese"},
+        "ja": {"ja", "jpn", "japanese"},
+        "ko": {"ko", "kor", "korean"},
+        "de": {"de", "deu", "ger", "german"},
+        "en": {"en", "eng", "english"},
+    }
+
+    if not normalized_code:
+        return set()
+
+    return ARGOS_LINGUA_ALIASES.get(normalized_code, {normalized_code})
+
+
+def index_translation(translation, source_language) -> None:
+    aliases = get_lingua_aliases_for_argos_code(source_language.code)
+
+    if not aliases:
+        logger.warning(
+            "Skipping Argos translation with no usable aliases: %s -> %s",
+            getattr(source_language, "code", "unknown"),
+            TARGET_LANGUAGE_CODE,
+        )
+        return
+
+    for alias in aliases:
+        argos_translations[alias] = {
+            "translation": translation,
+            "source_code": normalize_code(source_language.code),
+            "source_name": getattr(source_language, "name", source_language.code),
+            "aliases": sorted(aliases),
+        }
+
+    logger.info(
+        "Loaded Argos translation: %s -> %s (aliases=%s)",
+        source_language.code,
+        TARGET_LANGUAGE_CODE,
+        sorted(aliases),
     )
+
+
+def load_argos_translations():
+    argos_translations.clear()
+    installed_languages = argostranslate.translate.get_installed_languages()
+    installed_codes = sorted(
+        normalize_code(language.code) for language in installed_languages if language.code
+    )
+    logger.info("Python executable: %s", sys.executable)
+    logger.info("Installed Argos language codes: %s", installed_codes)
+
     target_language = next(
         (
             language
             for language in installed_languages
-            if language.code == SUPPORTED_TARGET_LANGUAGE_CODE
+            if normalize_code(language.code) == TARGET_LANGUAGE_CODE
         ),
         None,
     )
 
-    if source_language is None or target_language is None:
-        raise RuntimeError(
-            "Argos Translate packages for Chinese to English are not installed."
-        )
+    if target_language is None:
+        raise RuntimeError("Argos Translate English package is not installed.")
 
-    translation = source_language.get_translation(target_language)
+    for source_language in installed_languages:
+        source_code = normalize_code(source_language.code)
 
-    if translation is None:
-        raise RuntimeError(
-            "Chinese to English Argos Translate package is not available."
-        )
+        if source_code == TARGET_LANGUAGE_CODE:
+            continue
 
-    return translation
+        try:
+            translation = source_language.get_translation(target_language)
+        except Exception as exc:
+            logger.warning(
+                "Skipping Argos pair %s -> %s due to get_translation error: %s",
+                source_language.code,
+                target_language.code,
+                exc,
+            )
+            continue
+
+        if translation is None:
+            logger.warning(
+                "Skipping Argos pair %s -> %s because no translation object was returned.",
+                source_language.code,
+                target_language.code,
+            )
+            continue
+
+        index_translation(translation, source_language)
+
+    if not argos_translations:
+        raise RuntimeError("No Argos Translate source-to-English packages are installed.")
+
+    logger.info("Loaded source-to-English translation keys: %s", sorted(argos_translations))
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global argos_translation
-    argos_translation = load_argos_translation()
+    load_argos_translations()
     yield
 
 
 app = FastAPI(
-    title="Chinese to English Smart Translator API",
+    title="Smart Translator API",
     lifespan=lifespan,
 )
 
@@ -114,10 +185,11 @@ def detect_language(payload: DetectLanguageRequest):
         return {"language": "Unknown", "language_code": "unknown", "confidence": 0.0}
 
     detected_language = detector.detect_language_of(text)
+    detected_codes = get_language_code_candidates(detected_language)
 
     return {
         "language": get_language_name(detected_language),
-        "language_code": get_language_code(detected_language),
+        "language_code": detected_codes[0] if detected_codes else "unknown",
         "confidence": 1.0,
     }
 
@@ -131,24 +203,48 @@ def translate(payload: TranslateRequest):
 
     detected_language = detector.detect_language_of(text)
     detected_language_name = get_language_name(detected_language)
+    detected_codes = get_language_code_candidates(detected_language)
 
-    if detected_language != SUPPORTED_SOURCE_LANGUAGE:
+    logger.info(
+        "Translate request detected language: name=%s codes=%s",
+        detected_language_name,
+        detected_codes,
+    )
+
+    if not detected_codes:
+        raise HTTPException(status_code=400, detail="Could not detect the input language.")
+
+    if TARGET_LANGUAGE_CODE in detected_codes:
+        logger.info("Detected English input; returning text without Argos translation.")
+        return {
+            "detected_language": detected_language_name,
+            "translated_text": text,
+        }
+
+    translation_entry = None
+
+    for code in detected_codes:
+        translation_entry = argos_translations.get(code)
+
+        if translation_entry:
+            break
+
+    logger.info(
+        "Translation lookup result: found=%s matched_code=%s available_keys=%s",
+        bool(translation_entry),
+        code if translation_entry else None,
+        sorted(argos_translations),
+    )
+
+    if translation_entry is None:
         raise HTTPException(
             status_code=400,
-            detail="Only Chinese input is supported for translation.",
+            detail=f"Translation from {detected_language_name} to English is not available.",
         )
-
-    if argos_translation is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Chinese to English translation package is not loaded.",
-        )
-
-    translated_text = argos_translation.translate(text)
 
     return {
         "detected_language": detected_language_name,
-        "translated_text": translated_text,
+        "translated_text": translation_entry["translation"].translate(text),
     }
 
 
