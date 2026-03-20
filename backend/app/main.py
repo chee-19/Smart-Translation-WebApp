@@ -9,6 +9,12 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from lingua import Language, LanguageDetectorBuilder
 from pydantic import BaseModel
+import os
+
+os.environ["ARGOS_PACKAGE_DIR"] = os.getenv(
+    "ARGOS_PACKAGE_DIR",
+    "/opt/render/project/src/backend/.argos-packages"
+)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -178,12 +184,23 @@ def index_translation(translation, source_language) -> None:
 
 def load_argos_translations():
     argos_translations.clear()
+
     installed_languages = argostranslate.translate.get_installed_languages()
     installed_codes = sorted(
         normalize_code(language.code) for language in installed_languages if language.code
     )
+
     logger.info("Python executable: %s", sys.executable)
     logger.info("Installed Argos language codes: %s", installed_codes)
+
+    source_language = next(
+        (
+            language
+            for language in installed_languages
+            if normalize_code(language.code) == SOURCE_LANGUAGE_CODE
+        ),
+        None,
+    )
 
     target_language = next(
         (
@@ -194,40 +211,32 @@ def load_argos_translations():
         None,
     )
 
+    if source_language is None:
+        raise RuntimeError(f"Argos source language '{SOURCE_LANGUAGE_CODE}' is not installed.")
+
     if target_language is None:
-        raise RuntimeError("Argos Translate English package is not installed.")
+        raise RuntimeError(f"Argos target language '{TARGET_LANGUAGE_CODE}' is not installed.")
 
-    for source_language in installed_languages:
-        source_code = normalize_code(source_language.code)
+    try:
+        translation = source_language.get_translation(target_language)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to load Argos translation {SOURCE_LANGUAGE_CODE} -> {TARGET_LANGUAGE_CODE}: {exc}"
+        ) from exc
 
-        if source_code == TARGET_LANGUAGE_CODE or source_code != SOURCE_LANGUAGE_CODE:
-            continue
+    if translation is None:
+        raise RuntimeError(
+            f"Argos translation package {SOURCE_LANGUAGE_CODE} -> {TARGET_LANGUAGE_CODE} is not installed."
+        )
 
-        try:
-            translation = source_language.get_translation(target_language)
-        except Exception as exc:
-            logger.warning(
-                "Skipping Argos pair %s -> %s due to get_translation error: %s",
-                source_language.code,
-                target_language.code,
-                exc,
-            )
-            continue
-
-        if translation is None:
-            logger.warning(
-                "Skipping Argos pair %s -> %s because no translation object was returned.",
-                source_language.code,
-                target_language.code,
-            )
-            continue
-
-        index_translation(translation, source_language)
+    index_translation(translation, source_language)
 
     if not argos_translations:
-        raise RuntimeError("No Argos Translate source-to-English packages are installed.")
+        raise RuntimeError(
+            f"Argos translation {SOURCE_LANGUAGE_CODE} -> {TARGET_LANGUAGE_CODE} was found but not indexed."
+        )
 
-    logger.info("Loaded source-to-English translation keys: %s", sorted(argos_translations))
+    logger.info("Loaded Argos translation keys: %s", sorted(argos_translations))
 
 
 @asynccontextmanager
