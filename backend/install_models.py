@@ -13,7 +13,7 @@ ARGOS_PACKAGES_DIR = XDG_DATA_HOME / "argos-translate" / "packages"
 os.environ["XDG_DATA_HOME"] = str(XDG_DATA_HOME)
 os.environ["XDG_CACHE_HOME"] = str(XDG_CACHE_HOME)
 os.environ["XDG_CONFIG_HOME"] = str(XDG_CONFIG_HOME)
-os.environ["ARGOS_PACKAGES_DIR"] = str(ARGOS_PACKAGES_DIR)
+
 
 import argostranslate.package
 import argostranslate.settings
@@ -42,17 +42,29 @@ def configure_argos_environment() -> None:
     XDG_CONFIG_HOME.mkdir(parents=True, exist_ok=True)
     ARGOS_PACKAGES_DIR.mkdir(parents=True, exist_ok=True)
 
+    Path(argostranslate.settings.data_dir).mkdir(parents=True, exist_ok=True)
+    Path(argostranslate.settings.package_data_dir).mkdir(parents=True, exist_ok=True)
+    Path(argostranslate.settings.downloads_dir).mkdir(parents=True, exist_ok=True)
+    Path(argostranslate.settings.local_package_index).parent.mkdir(parents=True, exist_ok=True)
+
 
 def reset_argos_runtime_state() -> None:
-    argostranslate.translate.get_installed_languages.cache_clear()
+    cache_clear = getattr(
+        argostranslate.translate.get_installed_languages,
+        "cache_clear",
+        None,
+    )
+    if callable(cache_clear):
+        cache_clear()
+
     if hasattr(argostranslate.package, "get_installed_packages"):
-        cache_clear = getattr(
+        package_cache_clear = getattr(
             argostranslate.package.get_installed_packages,
             "cache_clear",
             None,
         )
-        if callable(cache_clear):
-            cache_clear()
+        if callable(package_cache_clear):
+            package_cache_clear()
 
 
 def log_argos_directories() -> None:
@@ -60,7 +72,7 @@ def log_argos_directories() -> None:
     logger.info("XDG_DATA_HOME: %s", os.environ["XDG_DATA_HOME"])
     logger.info("XDG_CACHE_HOME: %s", os.environ["XDG_CACHE_HOME"])
     logger.info("XDG_CONFIG_HOME: %s", os.environ["XDG_CONFIG_HOME"])
-    logger.info("ARGOS_PACKAGES_DIR env: %s", os.environ["ARGOS_PACKAGES_DIR"])
+    
     logger.info("Argos settings.data_dir: %s", argostranslate.settings.data_dir)
     logger.info(
         "Argos settings.package_data_dir: %s",
