@@ -329,7 +329,10 @@ async def translate_text(request: TranslateRequest):
     logger.info("TRANSLATE TIME: %.2fs", mid2 - mid1)
     logger.info("TOTAL TIME: %.2fs", mid2 - start)
 
-    return {"translated": translated}
+    return {
+        "translated": translated,
+        "detected_language": detected_lang.get("language", "Input"),
+    }
 
 
 @app.post("/transcribe-audio")

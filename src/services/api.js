@@ -22,5 +22,10 @@ export async function translateToEnglish(text) {
     throw new Error(await parseApiError(response, 'Failed to translate text.'));
   }
 
-  return response.json();
+  const data = await response.json();
+
+  return {
+    translated_text: data.translated || '',
+    detected_language: data.detected_language || 'Input',
+  };
 }
