@@ -1,71 +1,85 @@
 import os
-from pathlib import Path
+import sys
+import logging
+
+os.environ["ARGOS_PACKAGE_DIR"] = os.getenv(
+    "ARGOS_PACKAGE_DIR",
+    "/opt/render/project/src/backend/.argos-packages"
+)
 
 import argostranslate.package
 import argostranslate.translate
 
-SOURCE_CODE = "zh"
-TARGET_CODE = "en"
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("install-models")
+
+SOURCE_LANGUAGE_CODE = "zh"
+TARGET_LANGUAGE_CODE = "en"
 
 
-def normalize_code(code):
+def normalize_code(code: str | None) -> str | None:
     if not code:
         return None
     return code.strip().lower().replace("_", "-")
 
 
-def print_package_dir():
-    package_dir = os.environ.get("ARGOS_PACKAGE_DIR")
-    print("ARGOS_PACKAGE_DIR =", package_dir)
-    if package_dir:
-        Path(package_dir).mkdir(parents=True, exist_ok=True)
+def get_installed_language_by_code(code: str):
+    normalized_code = normalize_code(code)
+
+    for language in argostranslate.translate.get_installed_languages():
+        if normalize_code(language.code) == normalized_code:
+            return language
+
+    return None
 
 
-def list_installed_languages():
-    installed_languages = argostranslate.translate.get_installed_languages()
-    installed_codes = [
-        normalize_code(getattr(lang, "code", None))
-        for lang in installed_languages
-        if getattr(lang, "code", None)
-    ]
-    print("Installed Argos language codes:", installed_codes)
-    return installed_languages
-
-
-def is_translation_installed(from_code: str, to_code: str) -> bool:
-    installed_languages = argostranslate.translate.get_installed_languages()
-
-    source_language = next(
-        (lang for lang in installed_languages if normalize_code(lang.code) == from_code),
-        None,
-    )
-    target_language = next(
-        (lang for lang in installed_languages if normalize_code(lang.code) == to_code),
-        None,
-    )
+def get_installed_translation(source_code: str, target_code: str):
+    source_language = get_installed_language_by_code(source_code)
+    target_language = get_installed_language_by_code(target_code)
 
     if source_language is None or target_language is None:
-        return False
+        return None
 
     try:
-        translation = source_language.get_translation(target_language)
-        return translation is not None
+        return source_language.get_translation(target_language)
     except Exception as exc:
-        print(f"Translation check failed: {exc}")
-        return False
+        logger.warning(
+            "Could not load installed Argos translation %s -> %s: %s",
+            source_code,
+            target_code,
+            exc,
+        )
+        return None
 
 
-def main():
-    print_package_dir()
+def ensure_argos_translation_installed():
+    installed_languages = argostranslate.translate.get_installed_languages()
+    installed_codes_before = sorted(
+        normalize_code(language.code) for language in installed_languages if language.code
+    )
 
-    print("Before install check:")
-    list_installed_languages()
+    logger.info("ARGOS_PACKAGE_DIR = %s", os.getenv("ARGOS_PACKAGE_DIR"))
+    logger.info("Installed Argos language codes before ensure: %s", installed_codes_before)
 
-    if is_translation_installed(SOURCE_CODE, TARGET_CODE):
-        print(f"Argos model {SOURCE_CODE}_{TARGET_CODE} already installed.")
+    existing_translation = get_installed_translation(
+        SOURCE_LANGUAGE_CODE,
+        TARGET_LANGUAGE_CODE,
+    )
+
+    if existing_translation is not None:
+        logger.info(
+            "Argos package %s_%s already installed; skipping download/install.",
+            SOURCE_LANGUAGE_CODE,
+            TARGET_LANGUAGE_CODE,
+        )
         return
 
-    print(f"Installing Argos model {SOURCE_CODE}_{TARGET_CODE}...")
+    logger.info(
+        "Argos package %s_%s missing; downloading/installing now.",
+        SOURCE_LANGUAGE_CODE,
+        TARGET_LANGUAGE_CODE,
+    )
+
     argostranslate.package.update_package_index()
     available_packages = argostranslate.package.get_available_packages()
 
@@ -73,30 +87,46 @@ def main():
         (
             pkg
             for pkg in available_packages
-            if normalize_code(pkg.from_code) == SOURCE_CODE
-            and normalize_code(pkg.to_code) == TARGET_CODE
+            if normalize_code(pkg.from_code) == SOURCE_LANGUAGE_CODE
+            and normalize_code(pkg.to_code) == TARGET_LANGUAGE_CODE
         ),
         None,
     )
 
     if package_to_install is None:
-        raise RuntimeError(f"Could not find Argos package {SOURCE_CODE}_{TARGET_CODE}")
-
-    download_path = package_to_install.download()
-    print(f"Downloaded package to: {download_path}")
-
-    argostranslate.package.install_from_path(download_path)
-
-    print("After install check:")
-    list_installed_languages()
-
-    if not is_translation_installed(SOURCE_CODE, TARGET_CODE):
         raise RuntimeError(
-            f"Argos model {SOURCE_CODE}_{TARGET_CODE} still not available after install"
+            f"Argos package {SOURCE_LANGUAGE_CODE}_{TARGET_LANGUAGE_CODE} is not available."
         )
 
-    print(f"Installed Argos model {SOURCE_CODE}_{TARGET_CODE} successfully.")
+    download_path = package_to_install.download()
+    logger.info("Downloaded Argos package to: %s", download_path)
+
+    argostranslate.package.install_from_path(download_path)
+    logger.info("Installed Argos model successfully.")
+
+    installed_languages_after = argostranslate.translate.get_installed_languages()
+    installed_codes_after = sorted(
+        normalize_code(language.code) for language in installed_languages_after if language.code
+    )
+    logger.info("Installed Argos language codes after ensure: %s", installed_codes_after)
+
+    installed_translation = get_installed_translation(
+        SOURCE_LANGUAGE_CODE,
+        TARGET_LANGUAGE_CODE,
+    )
+    if installed_translation is None:
+        raise RuntimeError(
+            f"Argos package {SOURCE_LANGUAGE_CODE}_{TARGET_LANGUAGE_CODE} was installed, "
+            "but the translation could still not be loaded."
+        )
+
+    logger.info("Argos translation zh -> en is ready.")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        ensure_argos_translation_installed()
+        logger.info("Model installation script completed successfully.")
+    except Exception as exc:
+        logger.exception("Model installation failed: %s", exc)
+        sys.exit(1)
