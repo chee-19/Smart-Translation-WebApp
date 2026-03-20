@@ -1,17 +1,19 @@
+import asyncio
 import logging
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
 
+# Set Argos directories BEFORE importing argostranslate
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 ARGOS_ROOT_DIR = BACKEND_DIR / ".argos"
 XDG_DATA_HOME = ARGOS_ROOT_DIR / "data"
 XDG_CACHE_HOME = ARGOS_ROOT_DIR / "cache"
 XDG_CONFIG_HOME = ARGOS_ROOT_DIR / "config"
 
-# Set these BEFORE importing argostranslate so Argos picks up the correct dirs.
 os.environ["XDG_DATA_HOME"] = str(XDG_DATA_HOME)
 os.environ["XDG_CACHE_HOME"] = str(XDG_CACHE_HOME)
 os.environ["XDG_CONFIG_HOME"] = str(XDG_CONFIG_HOME)
@@ -38,6 +40,7 @@ detector = LanguageDetectorBuilder.from_languages(
 ).build()
 
 argos_translations = {}
+translator = None
 
 
 def normalize_code(code: str | None) -> str | None:
@@ -52,7 +55,6 @@ def configure_argos_environment() -> None:
     XDG_CACHE_HOME.mkdir(parents=True, exist_ok=True)
     XDG_CONFIG_HOME.mkdir(parents=True, exist_ok=True)
 
-    # Ensure Argos runtime dirs exist too
     Path(argostranslate.settings.data_dir).mkdir(parents=True, exist_ok=True)
     Path(argostranslate.settings.package_data_dir).mkdir(parents=True, exist_ok=True)
     Path(argostranslate.settings.downloads_dir).mkdir(parents=True, exist_ok=True)
@@ -75,15 +77,9 @@ def log_argos_environment() -> None:
     logger.info("XDG_CACHE_HOME: %s", os.environ["XDG_CACHE_HOME"])
     logger.info("XDG_CONFIG_HOME: %s", os.environ["XDG_CONFIG_HOME"])
     logger.info("Argos settings.data_dir: %s", argostranslate.settings.data_dir)
-    logger.info(
-        "Argos settings.package_data_dir: %s",
-        argostranslate.settings.package_data_dir,
-    )
+    logger.info("Argos settings.package_data_dir: %s", argostranslate.settings.package_data_dir)
     logger.info("Argos settings.package_dirs: %s", argostranslate.settings.package_dirs)
-    logger.info(
-        "Argos settings.local_package_index: %s",
-        argostranslate.settings.local_package_index,
-    )
+    logger.info("Argos settings.local_package_index: %s", argostranslate.settings.local_package_index)
     logger.info("Argos settings.downloads_dir: %s", argostranslate.settings.downloads_dir)
 
 
@@ -216,16 +212,8 @@ def load_argos_translations() -> None:
 
     installed_codes = list_installed_language_codes()
     logger.info("Installed Argos language codes at startup: %s", installed_codes)
-    logger.info(
-        "Startup has '%s': %s",
-        SOURCE_LANGUAGE_CODE,
-        SOURCE_LANGUAGE_CODE in installed_codes,
-    )
-    logger.info(
-        "Startup has '%s': %s",
-        TARGET_LANGUAGE_CODE,
-        TARGET_LANGUAGE_CODE in installed_codes,
-    )
+    logger.info("Startup has '%s': %s", SOURCE_LANGUAGE_CODE, SOURCE_LANGUAGE_CODE in installed_codes)
+    logger.info("Startup has '%s': %s", TARGET_LANGUAGE_CODE, TARGET_LANGUAGE_CODE in installed_codes)
 
     source_language, translation = load_required_translation()
     logger.info("Startup zh -> en translation loads: %s", translation is not None)
@@ -241,15 +229,46 @@ def load_argos_translations() -> None:
     logger.info("Loaded Argos translation keys: %s", sorted(argos_translations))
 
 
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
-    startup_started_at = perf_counter()
-    logger.info("Application startup started.")
-    load_argos_translations()
+def detect_language_from_text(text: str) -> dict:
+    text = text.strip()
+
+    if not text:
+        return {"language": "Unknown", "language_code": "unknown", "confidence": 0.0}
+
+    detection_started_at = perf_counter()
+    detected_language = detector.detect_language_of(text)
+    detected_codes = get_language_code_candidates(detected_language)
+    detection_duration = perf_counter() - detection_started_at
+
     logger.info(
-        "Application startup completed in %.3fs",
-        perf_counter() - startup_started_at,
+        "Language detection completed in %.3fs: name=%s codes=%s",
+        detection_duration,
+        get_language_name(detected_language),
+        detected_codes,
     )
+
+    return {
+        "language": get_language_name(detected_language),
+        "language_code": detected_codes[0] if detected_codes else "unknown",
+        "confidence": 1.0,
+    }
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global translator
+
+    load_argos_translations()
+
+    installed_languages = argostranslate.translate.get_installed_languages()
+    from_lang = next(lang for lang in installed_languages if lang.code == SOURCE_LANGUAGE_CODE)
+    to_lang = next(lang for lang in installed_languages if lang.code == TARGET_LANGUAGE_CODE)
+    translator = from_lang.get_translation(to_lang)
+
+    if translator is None:
+        raise RuntimeError("Translator failed to load during startup.")
+
+    logger.info("Application startup completed")
     yield
 
 
@@ -285,100 +304,32 @@ def health_check():
 
 @app.post("/detect-language")
 def detect_language(payload: DetectLanguageRequest):
-    text = payload.text.strip()
-
-    if not text:
-        return {"language": "Unknown", "language_code": "unknown", "confidence": 0.0}
-
-    detection_started_at = perf_counter()
-    detected_language = detector.detect_language_of(text)
-    detected_codes = get_language_code_candidates(detected_language)
-    detection_duration = perf_counter() - detection_started_at
-
-    logger.info(
-        "Language detection completed in %.3fs: name=%s codes=%s",
-        detection_duration,
-        get_language_name(detected_language),
-        detected_codes,
-    )
-
-    return {
-        "language": get_language_name(detected_language),
-        "language_code": detected_codes[0] if detected_codes else "unknown",
-        "confidence": 1.0,
-    }
+    return detect_language_from_text(payload.text)
 
 
 @app.post("/translate")
-def translate(payload: TranslateRequest):
-    request_started_at = perf_counter()
-    text = payload.text.strip()
+async def translate_text(request: TranslateRequest):
+    if translator is None:
+        raise HTTPException(status_code=500, detail="Translator not loaded.")
 
-    if not text:
-        raise HTTPException(status_code=400, detail="Text is required.")
+    start = time.time()
+    logger.info("STEP 1: Received translate request")
 
-    detection_started_at = perf_counter()
-    detected_language = detector.detect_language_of(text)
-    detection_duration = perf_counter() - detection_started_at
-    detected_language_name = get_language_name(detected_language)
-    detected_codes = get_language_code_candidates(detected_language)
+    detected_lang = detect_language_from_text(request.text)
+    logger.info("STEP 2: Detected language: %s", detected_lang)
 
-    logger.info(
-        "Translate request detected language in %.3fs: name=%s codes=%s",
-        detection_duration,
-        detected_language_name,
-        detected_codes,
-    )
+    mid1 = time.time()
 
-    if not detected_codes:
-        raise HTTPException(
-            status_code=400,
-            detail="Could not detect the input language.",
-        )
+    translated = await asyncio.to_thread(translator.translate, request.text)
 
-    if TARGET_LANGUAGE_CODE in detected_codes:
-        total_duration = perf_counter() - request_started_at
-        logger.info("Detected English input; returning text without Argos translation.")
-        logger.info("Total translate request duration: %.3fs", total_duration)
-        return {
-            "detected_language": detected_language_name,
-            "translated_text": text,
-        }
+    mid2 = time.time()
 
-    translation_entry = None
-    matched_code = None
+    logger.info("STEP 3: Translation done")
+    logger.info("DETECT TIME: %.2fs", mid1 - start)
+    logger.info("TRANSLATE TIME: %.2fs", mid2 - mid1)
+    logger.info("TOTAL TIME: %.2fs", mid2 - start)
 
-    for code in detected_codes:
-        translation_entry = argos_translations.get(code)
-        if translation_entry:
-            matched_code = code
-            break
-
-    logger.info(
-        "Translation lookup result: found=%s matched_code=%s available_keys=%s",
-        bool(translation_entry),
-        matched_code,
-        sorted(argos_translations),
-    )
-
-    if translation_entry is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Translation from {detected_language_name} to English is not available.",
-        )
-
-    translation_started_at = perf_counter()
-    translated_text = translation_entry["translation"].translate(text)
-    translation_duration = perf_counter() - translation_started_at
-    total_duration = perf_counter() - request_started_at
-
-    logger.info("Translation completed in %.3fs", translation_duration)
-    logger.info("Total translate request duration: %.3fs", total_duration)
-
-    return {
-        "detected_language": detected_language_name,
-        "translated_text": translated_text,
-    }
+    return {"translated": translated}
 
 
 @app.post("/transcribe-audio")
