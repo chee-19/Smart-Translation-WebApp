@@ -4,14 +4,16 @@ import sys
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parent
-DEFAULT_ARGOS_PACKAGE_DIR = BACKEND_DIR / ".argos-packages"
-ARGOS_PACKAGE_DIR = Path(
-    os.getenv("ARGOS_PACKAGE_DIR", str(DEFAULT_ARGOS_PACKAGE_DIR))
-).resolve()
-ARGOS_DATA_DIR = ARGOS_PACKAGE_DIR.parent / ".argos-data"
+ARGOS_ROOT_DIR = BACKEND_DIR / ".argos"
+XDG_DATA_HOME = ARGOS_ROOT_DIR / "data"
+XDG_CACHE_HOME = ARGOS_ROOT_DIR / "cache"
+XDG_CONFIG_HOME = ARGOS_ROOT_DIR / "config"
+ARGOS_PACKAGES_DIR = XDG_DATA_HOME / "argos-translate" / "packages"
 
-os.environ["ARGOS_PACKAGE_DIR"] = str(ARGOS_PACKAGE_DIR)
-os.environ["ARGOS_TRANSLATE_DATA_DIR"] = str(ARGOS_DATA_DIR)
+os.environ["XDG_DATA_HOME"] = str(XDG_DATA_HOME)
+os.environ["XDG_CACHE_HOME"] = str(XDG_CACHE_HOME)
+os.environ["XDG_CONFIG_HOME"] = str(XDG_CONFIG_HOME)
+os.environ["ARGOS_PACKAGES_DIR"] = str(ARGOS_PACKAGES_DIR)
 
 import argostranslate.package
 import argostranslate.settings
@@ -33,23 +35,55 @@ def normalize_code(code: str | None) -> str | None:
     return code.strip().lower().replace("_", "-")
 
 
-def configure_argos_directories() -> None:
-    ARGOS_PACKAGE_DIR.mkdir(parents=True, exist_ok=True)
-    ARGOS_DATA_DIR.mkdir(parents=True, exist_ok=True)
+def configure_argos_environment() -> None:
+    ARGOS_ROOT_DIR.mkdir(parents=True, exist_ok=True)
+    XDG_DATA_HOME.mkdir(parents=True, exist_ok=True)
+    XDG_CACHE_HOME.mkdir(parents=True, exist_ok=True)
+    XDG_CONFIG_HOME.mkdir(parents=True, exist_ok=True)
+    ARGOS_PACKAGES_DIR.mkdir(parents=True, exist_ok=True)
 
-    argostranslate.settings.data_dir = str(ARGOS_DATA_DIR)
-    argostranslate.settings.package_data_dir = str(ARGOS_PACKAGE_DIR)
 
+def reset_argos_runtime_state() -> None:
+    argostranslate.translate.get_installed_languages.cache_clear()
+    if hasattr(argostranslate.package, "get_installed_packages"):
+        cache_clear = getattr(
+            argostranslate.package.get_installed_packages,
+            "cache_clear",
+            None,
+        )
+        if callable(cache_clear):
+            cache_clear()
+
+
+def log_argos_directories() -> None:
     logger.info("Python executable: %s", sys.executable)
-    logger.info("ARGOS_PACKAGE_DIR: %s", ARGOS_PACKAGE_DIR)
-    logger.info("ARGOS_TRANSLATE_DATA_DIR: %s", ARGOS_DATA_DIR)
+    logger.info("XDG_DATA_HOME: %s", os.environ["XDG_DATA_HOME"])
+    logger.info("XDG_CACHE_HOME: %s", os.environ["XDG_CACHE_HOME"])
+    logger.info("XDG_CONFIG_HOME: %s", os.environ["XDG_CONFIG_HOME"])
+    logger.info("ARGOS_PACKAGES_DIR env: %s", os.environ["ARGOS_PACKAGES_DIR"])
+    logger.info("Argos settings.data_dir: %s", argostranslate.settings.data_dir)
+    logger.info(
+        "Argos settings.package_data_dir: %s",
+        argostranslate.settings.package_data_dir,
+    )
+    logger.info("Argos settings.package_dirs: %s", argostranslate.settings.package_dirs)
+    logger.info(
+        "Argos settings.local_package_index: %s",
+        argostranslate.settings.local_package_index,
+    )
+    logger.info("Argos settings.downloads_dir: %s", argostranslate.settings.downloads_dir)
+
+
+def list_installed_languages():
+    reset_argos_runtime_state()
+    return argostranslate.translate.get_installed_languages()
 
 
 def list_installed_language_codes() -> list[str]:
     return sorted(
         {
             normalize_code(language.code)
-            for language in argostranslate.translate.get_installed_languages()
+            for language in list_installed_languages()
             if language.code
         }
     )
@@ -58,7 +92,7 @@ def list_installed_language_codes() -> list[str]:
 def get_installed_language_by_code(code: str):
     normalized_code = normalize_code(code)
 
-    for language in argostranslate.translate.get_installed_languages():
+    for language in list_installed_languages():
         if normalize_code(language.code) == normalized_code:
             return language
 
@@ -75,7 +109,31 @@ def load_installed_translation(source_code: str, target_code: str):
     return source_language.get_translation(target_language)
 
 
-def verify_languages_installed() -> None:
+def log_installation_status(prefix: str) -> None:
+    installed_codes = list_installed_language_codes()
+    has_source = SOURCE_LANGUAGE_CODE in installed_codes
+    has_target = TARGET_LANGUAGE_CODE in installed_codes
+    translation = None
+
+    try:
+        translation = load_installed_translation(
+            SOURCE_LANGUAGE_CODE,
+            TARGET_LANGUAGE_CODE,
+        )
+    except Exception as exc:
+        logger.warning(
+            "%s zh -> en translation load raised an exception: %s",
+            prefix,
+            exc,
+        )
+
+    logger.info("%s installed languages: %s", prefix, installed_codes)
+    logger.info("%s has '%s': %s", prefix, SOURCE_LANGUAGE_CODE, has_source)
+    logger.info("%s has '%s': %s", prefix, TARGET_LANGUAGE_CODE, has_target)
+    logger.info("%s zh -> en translation loads: %s", prefix, translation is not None)
+
+
+def verify_installation() -> None:
     installed_codes = list_installed_language_codes()
 
     if SOURCE_LANGUAGE_CODE not in installed_codes:
@@ -90,8 +148,6 @@ def verify_languages_installed() -> None:
             f"Installed languages: {installed_codes}"
         )
 
-
-def verify_translation_loadable() -> None:
     try:
         translation = load_installed_translation(
             SOURCE_LANGUAGE_CODE,
@@ -109,37 +165,18 @@ def verify_translation_loadable() -> None:
             "is not installed or could not be loaded."
         )
 
-    logger.info(
-        "Verified Argos translation load: %s -> %s",
+
+def ensure_argos_translation_installed() -> None:
+    configure_argos_environment()
+    log_argos_directories()
+    log_installation_status("BEFORE install")
+
+    existing_translation = load_installed_translation(
         SOURCE_LANGUAGE_CODE,
         TARGET_LANGUAGE_CODE,
     )
 
-
-def ensure_argos_translation_installed() -> None:
-    configure_argos_directories()
-
-    installed_codes_before = list_installed_language_codes()
-    logger.info(
-        "Installed Argos language codes BEFORE installation: %s",
-        installed_codes_before,
-    )
-
-    translation = None
-    try:
-        translation = load_installed_translation(
-            SOURCE_LANGUAGE_CODE,
-            TARGET_LANGUAGE_CODE,
-        )
-    except Exception as exc:
-        logger.warning(
-            "Existing Argos translation %s -> %s could not be loaded yet: %s",
-            SOURCE_LANGUAGE_CODE,
-            TARGET_LANGUAGE_CODE,
-            exc,
-        )
-
-    if translation is None:
+    if existing_translation is None:
         logger.info(
             "Argos translation %s -> %s is missing. Downloading package.",
             SOURCE_LANGUAGE_CODE,
@@ -160,8 +197,8 @@ def ensure_argos_translation_installed() -> None:
 
         if package_to_install is None:
             raise RuntimeError(
-                f"Argos package {SOURCE_LANGUAGE_CODE}_{TARGET_LANGUAGE_CODE} is "
-                "not available from the package index."
+                f"Argos package {SOURCE_LANGUAGE_CODE}_{TARGET_LANGUAGE_CODE} "
+                "is not available from the package index."
             )
 
         download_path = package_to_install.download()
@@ -179,14 +216,10 @@ def ensure_argos_translation_installed() -> None:
             TARGET_LANGUAGE_CODE,
         )
 
-    installed_codes_after = list_installed_language_codes()
-    logger.info(
-        "Installed Argos language codes AFTER installation: %s",
-        installed_codes_after,
-    )
-
-    verify_languages_installed()
-    verify_translation_loadable()
+    reset_argos_runtime_state()
+    log_installation_status("AFTER install")
+    verify_installation()
+    logger.info("Argos installation verified successfully.")
 
 
 if __name__ == "__main__":
