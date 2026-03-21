@@ -118,6 +118,14 @@ function getPairKey(sourceText, translatedText) {
   return `${sourceText.trim()}:::${translatedText.trim()}`;
 }
 
+function tokenizeTranslatedText(text) {
+  return text.match(/(\s+|[\p{L}\p{N}]+(?:['-][\p{L}\p{N}]+)*|[^\s\p{L}\p{N}])/gu) || [];
+}
+
+function isSelectableToken(token) {
+  return /[\p{L}\p{N}]/u.test(token);
+}
+
 export default function TranslatorCard() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -129,6 +137,7 @@ export default function TranslatorCard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [isSlowMode, setIsSlowMode] = useState(false);
+  const [selectedWordIndexes, setSelectedWordIndexes] = useState([]);
   const [saveMessage, setSaveMessage] = useState('');
   const [copyMessage, setCopyMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -150,6 +159,10 @@ export default function TranslatorCard() {
   const currentPairKey = getPairKey(trimmedInputText, trimmedTranslatedText);
   const canSave = Boolean(trimmedInputText && trimmedTranslatedText) && !isSaving;
   const sourceLabel = detectedLanguage || 'Input';
+  const translatedTokens = useMemo(
+    () => tokenizeTranslatedText(translatedText),
+    [translatedText]
+  );
 
   useEffect(() => {
     if (activeTranscript) {
@@ -187,6 +200,10 @@ export default function TranslatorCard() {
     setSaveMessage('');
     setCopyMessage('');
   }, [currentPairKey]);
+
+  useEffect(() => {
+    setSelectedWordIndexes([]);
+  }, [translatedText]);
 
   useEffect(() => {
     if (!trimmedInputText || !trimmedTranslatedText) {
@@ -367,6 +384,62 @@ export default function TranslatorCard() {
     }
   }
 
+  function getSpeechRate() {
+    return isSlowMode ? 0.3 : 1;
+  }
+
+  function getSelectedEnglishText() {
+    if (!selectedWordIndexes.length) {
+      return trimmedTranslatedText;
+    }
+
+    const selectedText = selectedWordIndexes
+      .map((index) => translatedTokens[index])
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+
+    return selectedText || trimmedTranslatedText;
+  }
+
+  function handleToggleWord(index) {
+    setSelectedWordIndexes((currentIndexes) => {
+      if (currentIndexes.includes(index)) {
+        return currentIndexes.filter((currentIndex) => currentIndex !== index);
+      }
+
+      return [...currentIndexes, index].sort((left, right) => left - right);
+    });
+  }
+
+  function handleClearWordSelection() {
+    setSelectedWordIndexes([]);
+  }
+
+  function handleSpeakTranslation() {
+    const textToSpeak = getSelectedEnglishText();
+
+    if (!textToSpeak) {
+      return;
+    }
+
+    speak(textToSpeak, {
+      lang: 'en-US',
+      rate: getSpeechRate(),
+    });
+  }
+
+  function handleSpeakSource() {
+    if (!trimmedInputText) {
+      return;
+    }
+
+    speak(trimmedInputText, {
+      lang: 'zh-CN',
+      rate: 1,
+    });
+  }
+
   const translationPlaceholder = loading
     ? 'Translating...'
     : translatedText || 'Translation will appear here';
@@ -443,6 +516,16 @@ export default function TranslatorCard() {
             >
               <MicIcon />
             </button>
+
+            <button
+              type="button"
+              className="icon-button"
+              onClick={handleSpeakSource}
+              disabled={!trimmedInputText}
+              aria-label="Play source text audio"
+            >
+              <SpeakerIcon />
+            </button>
           </div>
         </section>
 
@@ -452,15 +535,68 @@ export default function TranslatorCard() {
           </div>
 
           <div className="panel-output-text" aria-live="polite">
-            {translationPlaceholder}
+            {loading || !translatedText ? (
+              translationPlaceholder
+            ) : (
+              translatedTokens.map((token, index) => {
+                if (/^\s+$/u.test(token)) {
+                  return (
+                    <span key={`space-${index}`} className="output-space">
+                      {token}
+                    </span>
+                  );
+                }
+
+                if (!isSelectableToken(token)) {
+                  return (
+                    <span key={`punct-${index}`} className="output-punctuation">
+                      {token}
+                    </span>
+                  );
+                }
+
+                const isSelected = selectedWordIndexes.includes(index);
+
+                return (
+                  <button
+                    key={`word-${index}`}
+                    type="button"
+                    className={`word-token ${isSelected ? 'is-selected' : ''}`}
+                    onClick={() => handleToggleWord(index)}
+                    aria-pressed={isSelected}
+                    aria-label={`${isSelected ? 'Remove' : 'Select'} word ${token} for replay`}
+                  >
+                    {token}
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          <div className="panel-helper-row">
+            <p className="panel-helper-text">
+              {selectedWordIndexes.length
+                ? 'Replay will use the selected English words.'
+                : 'Tip: tap words to replay only that part.'}
+            </p>
+            {selectedWordIndexes.length ? (
+              <button
+                type="button"
+                className="clear-selection-button"
+                onClick={handleClearWordSelection}
+                aria-label="Clear selected English words"
+              >
+                Clear selection
+              </button>
+            ) : null}
           </div>
 
           <div className="panel-footer panel-footer-output">
             <button
               type="button"
               className="icon-button"
-              onClick={() => speak(translatedText, { rate: isSlowMode ? 0.75 : 1 })}
-              disabled={!translatedText}
+              onClick={handleSpeakTranslation}
+              disabled={!trimmedTranslatedText}
               aria-label="Play translation audio"
             >
               <SpeakerIcon />
@@ -481,11 +617,12 @@ export default function TranslatorCard() {
                 type="checkbox"
                 checked={isSlowMode}
                 onChange={(event) => setIsSlowMode(event.target.checked)}
+                aria-label="Toggle slow speech"
               />
               <span className="slow-toggle-track" aria-hidden="true">
                 <span className="slow-toggle-thumb" />
               </span>
-              <span className="slow-toggle-label">Slow</span>
+              <span className="slow-toggle-label">Slow speech</span>
             </label>
           </div>
         </section>

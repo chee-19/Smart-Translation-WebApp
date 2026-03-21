@@ -200,12 +200,63 @@ textarea {
   word-break: break-word;
 }
 
+.output-space,
+.output-punctuation {
+  white-space: pre-wrap;
+}
+
+.word-token {
+  display: inline;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  padding: 0 0.08em;
+  margin: 0;
+  line-height: inherit;
+  cursor: pointer;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.word-token.is-selected {
+  background: rgba(242, 201, 76, 0.72);
+  box-shadow: 0 0 0 1px rgba(17, 17, 17, 0.14);
+}
+
+.panel-helper-row {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.panel-helper-text {
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  opacity: 0.8;
+}
+
+.clear-selection-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .panel-footer {
   margin-top: 16px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .panel-footer-output {
@@ -272,6 +323,7 @@ textarea {
 .slow-toggle-label {
   font-size: 1rem;
   line-height: 1;
+  white-space: nowrap;
 }
 
 .translate-button {
