@@ -50,7 +50,10 @@ POST /translate
 ### Response body
 ```json
 {
-  "translation": "Hello"
+  "translated": "Hello",
+  "detected_language": "Chinese",
+  "source_language": "zh",
+  "target_language": "en"
 }
 ```
 

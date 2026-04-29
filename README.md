@@ -8,4 +8,4 @@ app_port: 7860
 pinned: false
 ---
 
-FastAPI backend for Chinese to English translation using Argos Translate.
+Smart Translator Web App with a React frontend and FastAPI backend for Chinese-to-English and English-to-Chinese translation using Argos Translate.

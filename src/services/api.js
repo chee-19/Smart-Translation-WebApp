@@ -9,13 +9,17 @@ async function parseApiError(response, fallbackMessage) {
   }
 }
 
-export async function translateToEnglish(text) {
+export async function translateText(text, { sourceLanguage, targetLanguage }) {
   const response = await fetch(`${API_BASE_URL}/translate`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({
+      text,
+      source_language: sourceLanguage,
+      target_language: targetLanguage,
+    }),
   });
 
   if (!response.ok) {
@@ -27,5 +31,7 @@ export async function translateToEnglish(text) {
   return {
     translated_text: data.translated || '',
     detected_language: data.detected_language || 'Input',
+    source_language: data.source_language || sourceLanguage,
+    target_language: data.target_language || targetLanguage,
   };
 }

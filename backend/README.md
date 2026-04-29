@@ -1,12 +1,12 @@
 # Backend Starter
 
-This folder contains the starter backend scaffold for the Chinese → English Smart Translation Web App.
+This folder contains the backend for the Smart Translation Web App.
 
 ## Purpose
 The backend is responsible for:
 - detecting language with Lingua
 - transcribing speech with Whisper
-- translating Chinese to English with Argos Translate
+- translating Chinese to English and English to Chinese with Argos Translate
 
 ## Planned Stack
 - Python 3.11+
@@ -41,12 +41,13 @@ pip install -r requirements.txt
 
 ### 4. Run the backend
 ```bash
+python install_models.py
 uvicorn app.main:app --reload
 ```
 
 ## Notes
-This scaffold currently returns mock data so the frontend can be wired up early.
-Replace the placeholder logic with:
-- Lingua detection
-- Whisper transcription
-- Argos translation
+`install_models.py` installs both required Argos packages:
+- `zh -> en`
+- `en -> zh`
+
+The `/translate` endpoint expects `text`, `source_language`, and `target_language` in the request body.

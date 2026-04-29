@@ -25,8 +25,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("install-models")
 
-SOURCE_LANGUAGE_CODE = "zh"
-TARGET_LANGUAGE_CODE = "en"
+SUPPORTED_TRANSLATION_PAIRS = [
+    ("zh", "en"),
+    ("en", "zh"),
+]
 
 
 def normalize_code(code: str | None) -> str | None:
@@ -123,59 +125,63 @@ def load_installed_translation(source_code: str, target_code: str):
 
 def log_installation_status(prefix: str) -> None:
     installed_codes = list_installed_language_codes()
-    has_source = SOURCE_LANGUAGE_CODE in installed_codes
-    has_target = TARGET_LANGUAGE_CODE in installed_codes
-    translation = None
-
-    try:
-        translation = load_installed_translation(
-            SOURCE_LANGUAGE_CODE,
-            TARGET_LANGUAGE_CODE,
-        )
-    except Exception as exc:
-        logger.warning(
-            "%s zh -> en translation load raised an exception: %s",
-            prefix,
-            exc,
-        )
-
     logger.info("%s installed languages: %s", prefix, installed_codes)
-    logger.info("%s has '%s': %s", prefix, SOURCE_LANGUAGE_CODE, has_source)
-    logger.info("%s has '%s': %s", prefix, TARGET_LANGUAGE_CODE, has_target)
-    logger.info("%s zh -> en translation loads: %s", prefix, translation is not None)
+
+    for source_code, target_code in SUPPORTED_TRANSLATION_PAIRS:
+        has_source = source_code in installed_codes
+        has_target = target_code in installed_codes
+        translation = None
+
+        try:
+            translation = load_installed_translation(source_code, target_code)
+        except Exception as exc:
+            logger.warning(
+                "%s %s -> %s translation load raised an exception: %s",
+                prefix,
+                source_code,
+                target_code,
+                exc,
+            )
+
+        logger.info("%s has '%s': %s", prefix, source_code, has_source)
+        logger.info("%s has '%s': %s", prefix, target_code, has_target)
+        logger.info(
+            "%s %s -> %s translation loads: %s",
+            prefix,
+            source_code,
+            target_code,
+            translation is not None,
+        )
 
 
 def verify_installation() -> None:
     installed_codes = list_installed_language_codes()
+    for source_code, target_code in SUPPORTED_TRANSLATION_PAIRS:
+        if source_code not in installed_codes:
+            raise RuntimeError(
+                f"Argos source language '{source_code}' is not installed. "
+                f"Installed languages: {installed_codes}"
+            )
 
-    if SOURCE_LANGUAGE_CODE not in installed_codes:
-        raise RuntimeError(
-            f"Argos source language '{SOURCE_LANGUAGE_CODE}' is not installed. "
-            f"Installed languages: {installed_codes}"
-        )
+        if target_code not in installed_codes:
+            raise RuntimeError(
+                f"Argos target language '{target_code}' is not installed. "
+                f"Installed languages: {installed_codes}"
+            )
 
-    if TARGET_LANGUAGE_CODE not in installed_codes:
-        raise RuntimeError(
-            f"Argos target language '{TARGET_LANGUAGE_CODE}' is not installed. "
-            f"Installed languages: {installed_codes}"
-        )
+        try:
+            translation = load_installed_translation(source_code, target_code)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to load Argos translation {source_code} -> "
+                f"{target_code}: {exc}"
+            ) from exc
 
-    try:
-        translation = load_installed_translation(
-            SOURCE_LANGUAGE_CODE,
-            TARGET_LANGUAGE_CODE,
-        )
-    except Exception as exc:
-        raise RuntimeError(
-            f"Failed to load Argos translation {SOURCE_LANGUAGE_CODE} -> "
-            f"{TARGET_LANGUAGE_CODE}: {exc}"
-        ) from exc
-
-    if translation is None:
-        raise RuntimeError(
-            f"Argos translation {SOURCE_LANGUAGE_CODE} -> {TARGET_LANGUAGE_CODE} "
-            "is not installed or could not be loaded."
-        )
+        if translation is None:
+            raise RuntimeError(
+                f"Argos translation {source_code} -> {target_code} "
+                "is not installed or could not be loaded."
+            )
 
 
 def ensure_argos_translation_installed() -> None:
@@ -183,50 +189,49 @@ def ensure_argos_translation_installed() -> None:
     log_argos_directories()
     log_installation_status("BEFORE install")
 
-    existing_translation = load_installed_translation(
-        SOURCE_LANGUAGE_CODE,
-        TARGET_LANGUAGE_CODE,
-    )
+    argostranslate.package.update_package_index()
+    available_packages = argostranslate.package.get_available_packages()
 
-    if existing_translation is None:
-        logger.info(
-            "Argos translation %s -> %s is missing. Downloading package.",
-            SOURCE_LANGUAGE_CODE,
-            TARGET_LANGUAGE_CODE,
-        )
-        argostranslate.package.update_package_index()
-        available_packages = argostranslate.package.get_available_packages()
+    for source_code, target_code in SUPPORTED_TRANSLATION_PAIRS:
+        existing_translation = load_installed_translation(source_code, target_code)
 
-        package_to_install = next(
-            (
-                package
-                for package in available_packages
-                if normalize_code(package.from_code) == SOURCE_LANGUAGE_CODE
-                and normalize_code(package.to_code) == TARGET_LANGUAGE_CODE
-            ),
-            None,
-        )
-
-        if package_to_install is None:
-            raise RuntimeError(
-                f"Argos package {SOURCE_LANGUAGE_CODE}_{TARGET_LANGUAGE_CODE} "
-                "is not available from the package index."
+        if existing_translation is None:
+            logger.info(
+                "Argos translation %s -> %s is missing. Downloading package.",
+                source_code,
+                target_code,
             )
 
-        download_path = package_to_install.download()
-        logger.info("Downloaded Argos package to: %s", download_path)
-        argostranslate.package.install_from_path(download_path)
-        logger.info(
-            "Installed Argos package: %s -> %s",
-            SOURCE_LANGUAGE_CODE,
-            TARGET_LANGUAGE_CODE,
-        )
-    else:
-        logger.info(
-            "Argos translation %s -> %s already installed. Skipping download.",
-            SOURCE_LANGUAGE_CODE,
-            TARGET_LANGUAGE_CODE,
-        )
+            package_to_install = next(
+                (
+                    package
+                    for package in available_packages
+                    if normalize_code(package.from_code) == source_code
+                    and normalize_code(package.to_code) == target_code
+                ),
+                None,
+            )
+
+            if package_to_install is None:
+                raise RuntimeError(
+                    f"Argos package {source_code}_{target_code} "
+                    "is not available from the package index."
+                )
+
+            download_path = package_to_install.download()
+            logger.info("Downloaded Argos package to: %s", download_path)
+            argostranslate.package.install_from_path(download_path)
+            logger.info(
+                "Installed Argos package: %s -> %s",
+                source_code,
+                target_code,
+            )
+        else:
+            logger.info(
+                "Argos translation %s -> %s already installed. Skipping download.",
+                source_code,
+                target_code,
+            )
 
     reset_argos_runtime_state()
     log_installation_status("AFTER install")

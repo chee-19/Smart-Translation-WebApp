@@ -31,8 +31,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("smart-translator")
 
-SOURCE_LANGUAGE_CODE = "zh"
-TARGET_LANGUAGE_CODE = "en"
+SUPPORTED_TRANSLATION_PAIRS = [
+    ("zh", "en"),
+    ("en", "zh"),
+]
 
 detector = LanguageDetectorBuilder.from_languages(
     Language.CHINESE,
@@ -40,7 +42,6 @@ detector = LanguageDetectorBuilder.from_languages(
 ).build()
 
 argos_translations = {}
-translator = None
 
 
 def normalize_code(code: str | None) -> str | None:
@@ -119,20 +120,6 @@ def get_language_code_candidates(language) -> list[str]:
     return [code for code in dict.fromkeys(candidates) if code]
 
 
-def get_lingua_aliases_for_argos_code(argos_code: str) -> set[str]:
-    normalized_code = normalize_code(argos_code)
-
-    argos_lingua_aliases = {
-        "zh": {"zh", "zho", "chinese"},
-        "en": {"en", "eng", "english"},
-    }
-
-    if not normalized_code:
-        return set()
-
-    return argos_lingua_aliases.get(normalized_code, {normalized_code})
-
-
 def get_installed_language_by_code(code: str):
     normalized_code = normalize_code(code)
 
@@ -143,21 +130,21 @@ def get_installed_language_by_code(code: str):
     return None
 
 
-def load_required_translation():
-    source_language = get_installed_language_by_code(SOURCE_LANGUAGE_CODE)
-    target_language = get_installed_language_by_code(TARGET_LANGUAGE_CODE)
+def load_required_translation(source_code: str, target_code: str):
+    source_language = get_installed_language_by_code(source_code)
+    target_language = get_installed_language_by_code(target_code)
 
     installed_codes = list_installed_language_codes()
 
     if source_language is None:
         raise RuntimeError(
-            f"Argos source language '{SOURCE_LANGUAGE_CODE}' is not installed. "
+            f"Argos source language '{source_code}' is not installed. "
             f"Installed languages: {installed_codes}"
         )
 
     if target_language is None:
         raise RuntimeError(
-            f"Argos target language '{TARGET_LANGUAGE_CODE}' is not installed. "
+            f"Argos target language '{target_code}' is not installed. "
             f"Installed languages: {installed_codes}"
         )
 
@@ -165,43 +152,26 @@ def load_required_translation():
         translation = source_language.get_translation(target_language)
     except Exception as exc:
         raise RuntimeError(
-            f"Failed to load Argos translation {SOURCE_LANGUAGE_CODE} -> "
-            f"{TARGET_LANGUAGE_CODE}: {exc}"
+            f"Failed to load Argos translation {source_code} -> "
+            f"{target_code}: {exc}"
         ) from exc
 
     if translation is None:
         raise RuntimeError(
-            f"Argos translation {SOURCE_LANGUAGE_CODE} -> {TARGET_LANGUAGE_CODE} "
-            "is not installed."
+            f"Argos translation {source_code} -> {target_code} is not installed."
         )
 
     return source_language, translation
 
 
-def index_translation(translation, source_language) -> None:
-    aliases = get_lingua_aliases_for_argos_code(source_language.code)
-
-    if not aliases:
-        logger.warning(
-            "Skipping Argos translation with no usable aliases: %s -> %s",
-            getattr(source_language, "code", "unknown"),
-            TARGET_LANGUAGE_CODE,
-        )
-        return
-
-    for alias in aliases:
-        argos_translations[alias] = {
-            "translation": translation,
-            "source_code": normalize_code(source_language.code),
-            "source_name": getattr(source_language, "name", source_language.code),
-            "aliases": sorted(aliases),
-        }
+def index_translation(source_code: str, target_code: str, translation) -> None:
+    pair_key = (normalize_code(source_code), normalize_code(target_code))
+    argos_translations[pair_key] = translation
 
     logger.info(
-        "Loaded Argos translation: %s -> %s (aliases=%s)",
-        source_language.code,
-        TARGET_LANGUAGE_CODE,
-        sorted(aliases),
+        "Loaded Argos translation: %s -> %s",
+        source_code,
+        target_code,
     )
 
 
@@ -212,21 +182,26 @@ def load_argos_translations() -> None:
 
     installed_codes = list_installed_language_codes()
     logger.info("Installed Argos language codes at startup: %s", installed_codes)
-    logger.info("Startup has '%s': %s", SOURCE_LANGUAGE_CODE, SOURCE_LANGUAGE_CODE in installed_codes)
-    logger.info("Startup has '%s': %s", TARGET_LANGUAGE_CODE, TARGET_LANGUAGE_CODE in installed_codes)
+    for source_code, target_code in SUPPORTED_TRANSLATION_PAIRS:
+        logger.info("Startup has '%s': %s", source_code, source_code in installed_codes)
+        logger.info("Startup has '%s': %s", target_code, target_code in installed_codes)
 
-    source_language, translation = load_required_translation()
-    logger.info("Startup zh -> en translation loads: %s", translation is not None)
-
-    index_translation(translation, source_language)
+        _, translation = load_required_translation(source_code, target_code)
+        logger.info(
+            "Startup %s -> %s translation loads: %s",
+            source_code,
+            target_code,
+            translation is not None,
+        )
+        index_translation(source_code, target_code, translation)
 
     if not argos_translations:
-        raise RuntimeError(
-            f"Argos translation {SOURCE_LANGUAGE_CODE} -> {TARGET_LANGUAGE_CODE} "
-            "was found but could not be indexed."
-        )
+        raise RuntimeError("No Argos translations were loaded.")
 
-    logger.info("Loaded Argos translation keys: %s", sorted(argos_translations))
+    logger.info(
+        "Loaded Argos translation keys: %s",
+        [f"{source}->{target}" for source, target in sorted(argos_translations)],
+    )
 
 
 def detect_language_from_text(text: str) -> dict:
@@ -256,18 +231,7 @@ def detect_language_from_text(text: str) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global translator
-
     load_argos_translations()
-
-    installed_languages = argostranslate.translate.get_installed_languages()
-    from_lang = next(lang for lang in installed_languages if lang.code == SOURCE_LANGUAGE_CODE)
-    to_lang = next(lang for lang in installed_languages if lang.code == TARGET_LANGUAGE_CODE)
-    translator = from_lang.get_translation(to_lang)
-
-    if translator is None:
-        raise RuntimeError("Translator failed to load during startup.")
-
     logger.info("Application startup completed")
     yield
 
@@ -295,6 +259,8 @@ class DetectLanguageRequest(BaseModel):
 
 class TranslateRequest(BaseModel):
     text: str
+    source_language: str
+    target_language: str
 
 
 @app.get("/")
@@ -309,8 +275,24 @@ def detect_language(payload: DetectLanguageRequest):
 
 @app.post("/translate")
 async def translate_text(request: TranslateRequest):
+    source_code = normalize_code(request.source_language)
+    target_code = normalize_code(request.target_language)
+    translator = argos_translations.get((source_code, target_code))
+
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="Text is required.")
+
+    if source_code == target_code:
+        raise HTTPException(status_code=400, detail="Source and target languages must differ.")
+
     if translator is None:
-        raise HTTPException(status_code=500, detail="Translator not loaded.")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported translation direction: {request.source_language} -> "
+                f"{request.target_language}"
+            ),
+        )
 
     start = time.time()
     logger.info("STEP 1: Received translate request")
@@ -332,6 +314,8 @@ async def translate_text(request: TranslateRequest):
     return {
         "translated": translated,
         "detected_language": detected_lang.get("language", "Input"),
+        "source_language": source_code,
+        "target_language": target_code,
     }
 
 

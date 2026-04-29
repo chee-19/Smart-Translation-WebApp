@@ -24,7 +24,7 @@ The frontend handles:
 The backend handles:
 - text language detection with Lingua
 - voice transcription with Whisper
-- Chinese → English translation with Argos Translate
+- Chinese ↔ English translation with Argos Translate
 
 ### Database / Cloud Storage
 Supabase handles:
@@ -43,11 +43,11 @@ Text is passed to Lingua
         ↓
 Language is identified
         ↓
-Text is translated from Chinese to English
+Text is translated in the selected direction between Chinese and English
         ↓
-English output is shown on screen
+Translated output is shown on screen
         ↓
-User taps speaker button to hear English pronunciation
+User taps speaker button to hear translated pronunciation
 ```
 
 ## Why this split is used

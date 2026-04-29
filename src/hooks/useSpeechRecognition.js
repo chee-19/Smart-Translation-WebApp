@@ -10,11 +10,11 @@ export function useSpeechRecognition() {
 
   const isSupported = useMemo(() => Boolean(SpeechRecognition), [SpeechRecognition]);
 
-  function createRecognition() {
+  function createRecognition(language = 'zh-CN') {
     if (!SpeechRecognition) return null;
 
     const recognition = new SpeechRecognition();
-    recognition.lang = 'zh-CN';
+    recognition.lang = language;
     recognition.continuous = false;
     recognition.interimResults = false;
 
@@ -33,13 +33,15 @@ export function useSpeechRecognition() {
     return recognition;
   }
 
-  function startListening() {
+  function startListening(language = 'zh-CN') {
     if (!SpeechRecognition) return;
 
-    if (!recognitionRef.current) {
-      recognitionRef.current = createRecognition();
+    if (!recognitionRef.current || recognitionRef.current.lang !== language) {
+      recognitionRef.current?.stop();
+      recognitionRef.current = createRecognition(language);
     }
 
+    recognitionRef.current.lang = language;
     recognitionRef.current?.start();
   }
 

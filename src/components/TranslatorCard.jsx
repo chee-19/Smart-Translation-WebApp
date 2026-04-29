@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { translateToEnglish } from '../services/api';
+import { translateText } from '../services/api';
 import {
   checkTranslationSaved,
   deleteSavedTranslation,
@@ -126,12 +126,57 @@ function isSelectableToken(token) {
   return /[\p{L}\p{N}]/u.test(token);
 }
 
+const TRANSLATION_DIRECTIONS = {
+  'zh-en': {
+    sourceLanguage: {
+      code: 'zh',
+      label: 'Chinese',
+      speechRecognitionLang: 'zh-CN',
+      speechSynthesisLang: 'zh-CN',
+    },
+    targetLanguage: {
+      code: 'en',
+      label: 'English',
+      speechSynthesisLang: 'en-US',
+    },
+  },
+  'en-zh': {
+    sourceLanguage: {
+      code: 'en',
+      label: 'English',
+      speechRecognitionLang: 'en-US',
+      speechSynthesisLang: 'en-US',
+    },
+    targetLanguage: {
+      code: 'zh',
+      label: 'Chinese',
+      speechSynthesisLang: 'zh-CN',
+    },
+  },
+};
+
+function normalizeLanguageLabel(value) {
+  return value?.trim().toLowerCase() || '';
+}
+
+function getDirectionFromSavedTranslation(translation) {
+  const sourceLanguage = normalizeLanguageLabel(translation?.source_language);
+  const targetLanguage = normalizeLanguageLabel(translation?.target_language);
+
+  if (sourceLanguage === 'english' || targetLanguage === 'chinese') {
+    return 'en-zh';
+  }
+
+  return 'zh-en';
+}
+
 export default function TranslatorCard() {
   const location = useLocation();
   const navigate = useNavigate();
   const savedStatusCacheRef = useRef(new Map());
   const [inputText, setInputText] = useState('');
   const [detectedLanguage, setDetectedLanguage] = useState('');
+  const [translationDirection, setTranslationDirection] = useState('zh-en');
   const [confidence, setConfidence] = useState('');
   const [translatedText, setTranslatedText] = useState('');
   const [loading, setLoading] = useState(false);
@@ -153,12 +198,14 @@ export default function TranslatorCard() {
     clearTranscript,
   } = useSpeechRecognition();
 
+  const directionConfig = TRANSLATION_DIRECTIONS[translationDirection];
+  const sourceLanguage = directionConfig.sourceLanguage;
+  const targetLanguage = directionConfig.targetLanguage;
   const activeTranscript = useMemo(() => transcript?.trim(), [transcript]);
   const trimmedInputText = inputText.trim();
   const trimmedTranslatedText = translatedText.trim();
   const currentPairKey = getPairKey(trimmedInputText, trimmedTranslatedText);
   const canSave = Boolean(trimmedInputText && trimmedTranslatedText) && !isSaving;
-  const sourceLabel = detectedLanguage || 'Input';
   const translatedTokens = useMemo(
     () => tokenizeTranslatedText(translatedText),
     [translatedText]
@@ -182,12 +229,13 @@ export default function TranslatorCard() {
 
     const sourceText = preload.source_text ?? '';
     const translatedValue = preload.translated_text ?? '';
-    const sourceLanguage = preload.source_language ?? 'Input';
+    const preloadDirection = getDirectionFromSavedTranslation(preload);
     const preloadKey = getPairKey(sourceText, translatedValue);
 
+    setTranslationDirection(preloadDirection);
     setInputText(sourceText);
     setTranslatedText(translatedValue);
-    setDetectedLanguage(sourceLanguage);
+    setDetectedLanguage('');
     setConfidence('');
     setError('');
     setSaveMessage('');
@@ -254,7 +302,10 @@ export default function TranslatorCard() {
       setSaveMessage('');
       setCopyMessage('');
 
-      const translation = await translateToEnglish(cleanText);
+      const translation = await translateText(cleanText, {
+        sourceLanguage: sourceLanguage.code,
+        targetLanguage: targetLanguage.code,
+      });
 
       setDetectedLanguage(translation.detected_language || 'Input');
       setConfidence('');
@@ -281,12 +332,30 @@ export default function TranslatorCard() {
       return;
     }
 
-    startListening();
+    startListening(sourceLanguage.speechRecognitionLang);
   }
 
   function handleClearInput() {
     setInputText('');
     setTranslatedText('');
+    setDetectedLanguage('');
+    setConfidence('');
+    setError('');
+    setSaveMessage('');
+    setCopyMessage('');
+    setIsCurrentSaved(false);
+    clearTranscript();
+  }
+
+  function handleSwapDirection() {
+    const nextInputText = trimmedTranslatedText || inputText;
+    const nextTranslatedText = trimmedTranslatedText ? trimmedInputText : '';
+
+    setTranslationDirection((currentDirection) =>
+      currentDirection === 'zh-en' ? 'en-zh' : 'zh-en'
+    );
+    setInputText(nextInputText);
+    setTranslatedText(nextTranslatedText);
     setDetectedLanguage('');
     setConfidence('');
     setError('');
@@ -348,8 +417,8 @@ export default function TranslatorCard() {
       const result = await saveTranslation({
         sourceText: trimmedInputText,
         translatedText: trimmedTranslatedText,
-        sourceLanguage: detectedLanguage || 'Input',
-        targetLanguage: 'English',
+        sourceLanguage: sourceLanguage.label,
+        targetLanguage: targetLanguage.label,
       });
 
       if (result.status === 'duplicate') {
@@ -388,7 +457,7 @@ export default function TranslatorCard() {
     return isSlowMode ? 0.3 : 1;
   }
 
-  function getSelectedEnglishText() {
+  function getSelectedTranslatedText() {
     if (!selectedWordIndexes.length) {
       return trimmedTranslatedText;
     }
@@ -396,7 +465,7 @@ export default function TranslatorCard() {
     const selectedText = selectedWordIndexes
       .map((index) => translatedTokens[index])
       .filter(Boolean)
-      .join(' ')
+      .join(targetLanguage.code === 'zh' ? '' : ' ')
       .trim();
 
     return selectedText || trimmedTranslatedText;
@@ -417,14 +486,14 @@ export default function TranslatorCard() {
   }
 
   function handleSpeakTranslation() {
-    const textToSpeak = getSelectedEnglishText();
+    const textToSpeak = getSelectedTranslatedText();
 
     if (!textToSpeak) {
       return;
     }
 
     speak(textToSpeak, {
-      lang: 'en-US',
+      lang: targetLanguage.speechSynthesisLang,
       rate: getSpeechRate(),
     });
   }
@@ -435,7 +504,7 @@ export default function TranslatorCard() {
     }
 
     speak(trimmedInputText, {
-      lang: 'zh-CN',
+      lang: sourceLanguage.speechSynthesisLang,
       rate: 1,
     });
   }
@@ -447,23 +516,25 @@ export default function TranslatorCard() {
   const detectionSummary =
     detectedLanguage && confidence
       ? `Detected ${detectedLanguage} with ${confidence} confidence.`
-      : detectedLanguage || '';
+      : detectedLanguage
+        ? `Detected input as ${detectedLanguage}.`
+        : '';
 
   return (
     <section className="translator-app">
       <header className="language-bar" aria-label="Language selection">
         <div className="language-pair">
-          <span className="language-name">{sourceLabel}</span>
+          <span className="language-name">{sourceLanguage.label}</span>
           <button
             type="button"
             className="swap-button"
-            aria-label="Auto-detect input language"
-            disabled
-            title="Input language is detected automatically."
+            onClick={handleSwapDirection}
+            aria-label={`Switch translation direction from ${sourceLanguage.label} to ${targetLanguage.label}`}
+            title="Switch translation direction"
           >
             <SwapIcon />
           </button>
-          <span className="language-name">English</span>
+          <span className="language-name">{targetLanguage.label}</span>
         </div>
 
         <button
@@ -483,7 +554,7 @@ export default function TranslatorCard() {
       <div className="translator-stack">
         <section className="translator-panel translator-panel-input">
           <div className="panel-header">
-            <p className="panel-label">{sourceLabel}</p>
+            <p className="panel-label">{sourceLanguage.label}</p>
           </div>
 
           <label className="sr-only" htmlFor="translator-input">
@@ -531,7 +602,7 @@ export default function TranslatorCard() {
 
         <section className="translator-panel translator-panel-output">
           <div className="panel-header">
-            <p className="panel-label">English</p>
+            <p className="panel-label">{targetLanguage.label}</p>
           </div>
 
           <div className="panel-output-text" aria-live="polite">
@@ -576,15 +647,15 @@ export default function TranslatorCard() {
           <div className="panel-helper-row">
             <p className="panel-helper-text">
               {selectedWordIndexes.length
-                ? 'Replay will use the selected English words.'
-                : 'Tip: tap words to replay only that part.'}
+                ? 'Replay will use the selected translated text.'
+                : 'Tip: tap parts of the translation to replay only that part.'}
             </p>
             {selectedWordIndexes.length ? (
               <button
                 type="button"
                 className="clear-selection-button"
                 onClick={handleClearWordSelection}
-                aria-label="Clear selected English words"
+                aria-label="Clear selected translated text"
               >
                 Clear selection
               </button>
@@ -607,7 +678,7 @@ export default function TranslatorCard() {
               className="icon-button"
               onClick={handleCopyTranslation}
               disabled={!translatedText}
-              aria-label="Copy English translation"
+              aria-label={`Copy ${targetLanguage.label} translation`}
             >
               <CopyIcon />
             </button>
